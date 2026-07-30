@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+
+# Timestamped config backups the app writes next to your rules file.
+*.bak.*
+
+# Local editor/agent state, not project config.
+.claude/settings.local.json
