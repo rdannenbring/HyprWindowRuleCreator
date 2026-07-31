@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hyprwrc"
+version = "0.1.0"
+description = "Build Hyprland window rules by clicking the window"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Robert Dannenbring" }]
+keywords = ["hyprland", "wayland", "window-rules", "gtk4", "libadwaita"]
+classifiers = [
+    "Environment :: X11 Applications :: GTK",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Desktop Environment :: Window Managers",
+]
+
+# PyGObject, GTK4 and libadwaita are deliberately not listed: they are
+# system packages with C libraries behind them, and pip installing them
+# beside a distro's own copies is how people break their desktop. The
+# PKGBUILD declares them as real dependencies instead.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/rdannenbring/HyprWindowRuleCreator"
+Issues = "https://github.com/rdannenbring/HyprWindowRuleCreator/issues"
+
+[project.scripts]
+hyprwrc = "hyprwrc.cli:main"
+
+[tool.setuptools]
+packages = ["hyprwrc"]

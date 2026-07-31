@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=HyprWindowRuleCreator
+GenericName=Hyprland Window Rule Editor
+Comment=Build Hyprland window rules by clicking the window
+Exec=hyprwrc
+Icon=preferences-system-windows
+Terminal=false
+Categories=Settings;DesktopSettings;Utility;
+Keywords=hyprland;wayland;window;rule;compositor;
+# Launching with no arguments starts the click-to-pick selector, which is the
+# sensible thing to happen when someone runs this from a launcher.
+StartupNotify=true

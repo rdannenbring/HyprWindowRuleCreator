@@ -1,3 +1,22 @@
+Metadata-Version: 2.4
+Name: hyprwrc
+Version: 0.1.0
+Summary: Build Hyprland window rules by clicking the window
+Author: Robert Dannenbring
+License-Expression: MIT
+Project-URL: Homepage, https://github.com/rdannenbring/HyprWindowRuleCreator
+Project-URL: Issues, https://github.com/rdannenbring/HyprWindowRuleCreator/issues
+Keywords: hyprland,wayland,window-rules,gtk4,libadwaita
+Classifier: Environment :: X11 Applications :: GTK
+Classifier: Intended Audience :: End Users/Desktop
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Programming Language :: Python :: 3
+Classifier: Topic :: Desktop Environment :: Window Managers
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Dynamic: license-file
+
 # hyprwrc — HyprWindowRuleCreator
 
 Build a Hyprland window rule by clicking the window you want it to apply to.
@@ -26,55 +45,14 @@ The general-purpose Hyprland config GUIs
 [hyprconfig](https://github.com/spinualexandru/hyprconfig)) don't cover window
 rules at all.
 
-## What it looks like
-
-Rules that already apply to the window you picked, in evaluation order. The one
-that actually wins is pinned to the top; expanding any row puts its real source
-from the file in the pane.
-
-![Rules matching the picked window](docs/screenshots/01-matching-rules.png)
-
-Editing one. The list gets out of the way, the form takes its place, and the
-generated rule updates as you type — here `initial_class` is matching any of
-three portal implementations, joined into one RE2 alternation.
-
-![Editing a rule](docs/screenshots/02-editing-a-rule.png)
-
-Every rule in the config, grouped by the file that defines them, files in load
-order. Rules this tool did not write are listed too — they are a common reason
-a new rule appears to do nothing.
-
-![All rules in the config](docs/screenshots/03-all-rules.png)
-
-The template library. Expanding one shows what activating it would write,
-along with where the recipe came from.
-
-![Templates](docs/screenshots/04-templates.png)
-
 ## Install
 
-### Arch (AUR)
-
-```bash
-yay -S hyprwrc-git
-```
-
-### From a checkout
-
 Requires `python-gobject`, `gtk4`, `libadwaita`, `slurp`. Optional:
-`gtksourceview5` for syntax highlighting in the generated-rule pane.
+`gtksourceview5` for syntax highlighting.
 
 ```bash
-git clone https://github.com/rdannenbring/HyprWindowRuleCreator
-cd HyprWindowRuleCreator && ./bin/hyprwrc
+git clone <this repo> && cd HyprWindowRuleCreator && ./bin/hyprwrc
 ```
-
-`bin/hyprwrc` runs straight from the checkout with no install step. The AUR
-package installs the same thing as `hyprwrc` on your PATH.
-
-## Licence
-
-MIT — see [LICENSE](LICENSE).
 
 ## Keybinds
 
@@ -98,7 +76,7 @@ hl.window_rule({
   match  = { class = "^dev\\.hyprwrc\\.HyprWindowRuleCreator$" },
   float  = true,
   center = true,
-  size   = {1500, 880},
+  size   = {1180, 780},
 })
 ```
 
