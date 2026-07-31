@@ -283,6 +283,7 @@ class EditorWindow(Adw.ApplicationWindow):
         self._closing = False         # close already confirmed
         self._viewed_source = None    # a rule being inspected
         self._viewed_key = None
+        self._viewed_label = "Rules"
         self.template_store = templates.TemplateStore()
         self._rows_match: dict[str, FieldRow] = {}
         self._rows_effect: dict[str, FieldRow] = {}
@@ -934,15 +935,61 @@ class EditorWindow(Adw.ApplicationWindow):
         self._rebuild_existing()
         self._refresh()
 
+    def _on_template_expanded(self, row, t: templates.Template):
+        key = ("template", t.id)
+        if not row.get_expanded():
+            if self._viewed_key == key:
+                self._viewed_source = None
+                self._viewed_key = None
+                self._viewed_label = "Rules"
+                self._refresh()
+            return
+        self._viewed_key = key
+        self._viewed_source = self._source_for_template(t)
+        self._viewed_label = "Template rule"
+        self._refresh()
+
+    def _source_for_template(self, t: templates.Template) -> str:
+        """What activating this template would write.
+
+        A template has no file to quote, unlike a rule, so this is rendered
+        rather than read -- but it is rendered through the same emitter that
+        would write it, so what you see is what you would get.
+        """
+        comment = "--" if self.store.dialect == "lua" else "#"
+        origin = ("shipped" if t.builtin and not t.overridden else
+                  "shipped, edited" if t.builtin else "yours")
+        lines = [f"{comment} template “{t.title}”  ·  {origin}"]
+
+        state, rules = self._template_state(t)
+        if state == "enabled":
+            lines.append(f"{comment} already active as a rule in your config")
+        elif state == "disabled":
+            lines.append(f"{comment} present in your config but deactivated")
+        else:
+            lines.append(f"{comment} not in your config yet — this is what "
+                         f"Activate would write")
+
+        if not t.is_directly_usable():
+            lines.append(f"{comment} no match criteria: Use it and fill them "
+                         f"in, it cannot be activated as-is")
+
+        body = emit.render(t.to_rule(), self.store.dialect)
+        if t.id:
+            body = self.store.template_marker(t.id) + "\n" + body
+        return "\n".join(lines) + "\n\n" + body
+
     def _on_row_expanded(self, row, found: scan.FoundRule):
         if not row.get_expanded():
             if self._viewed_key == found.key:
                 self._viewed_source = None
                 self._viewed_key = None
+                self._viewed_label = "Rules"
                 self._refresh()
             return
         self._viewed_key = found.key
         self._viewed_source = self._source_for(found)
+        self._viewed_label = "Rule source"
         self._refresh()
 
     def _source_for(self, found: scan.FoundRule) -> str:
@@ -1033,6 +1080,7 @@ class EditorWindow(Adw.ApplicationWindow):
         self._scope = self.scope_toggle.get_active_name() or "window"
         self._viewed_source = None
         self._viewed_key = None
+        self._viewed_label = "Rules"
         self._sync_scope_labels()
         self._rescan_only()
         self._rebuild_existing()
@@ -1330,6 +1378,9 @@ class EditorWindow(Adw.ApplicationWindow):
         row.add_prefix(Gtk.Image.new_from_icon_name(
             "emblem-ok-symbolic" if editing else "view-list-bullet-symbolic"))
         row.add_suffix(self._template_actions(t))
+
+        row.connect("notify::expanded",
+                    lambda r, _p, tt=t: self._on_template_expanded(r, tt))
 
         if t.description:
             row.add_row(self._detail("about", t.description))
@@ -1857,6 +1908,7 @@ class EditorWindow(Adw.ApplicationWindow):
         """Back to a blank rule seeded from the picked window. No draft."""
         self._viewed_source = None
         self._viewed_key = None
+        self._viewed_label = "Rules"
         self._editing_id = None
         self._template_edit = None
         self._template_is_new = False
@@ -2135,7 +2187,7 @@ class EditorWindow(Adw.ApplicationWindow):
         if hasattr(self, "output_title"):
             self.output_title.set_label(
                 "Generated rule" if self.has_selection else
-                "Rule source" if self._viewed_source else "Rules")
+                self._viewed_label if self._viewed_source else "Rules")
 
         if not self.has_selection:
             # Nothing selected: the code pane would otherwise show a validation

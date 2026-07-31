@@ -144,6 +144,11 @@ row puts that rule's **actual source** in the right-hand pane — the exact text
 from the file, not a re-rendering of what was parsed out of it — with its
 position and whether it is commented out.
 
+Expanding a template does the same, except a template has no file to quote, so
+the pane shows what activating it *would* write — rendered through the same
+emitter that would write it — and says whether it is already in your config,
+already there but deactivated, or not yet added.
+
 **Existing rules.** On open, the config is scanned for rules that already apply
 to the picked window, and they are listed **in evaluation order** — file load
 order, then position within the file — because that is what decides which one
