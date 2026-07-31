@@ -59,6 +59,10 @@ along with where the recipe came from.
 yay -S hyprwrc-git
 ```
 
+Not submitted to the AUR yet — the `PKGBUILD` and `.SRCINFO` live in
+[`packaging/`](packaging/) and build today with `makepkg`. See
+[packaging/README.md](packaging/README.md) for how to publish it.
+
 ### From a checkout
 
 Requires `python-gobject`, `gtk4`, `libadwaita`, `slurp`. Optional:

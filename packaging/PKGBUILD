@@ -32,8 +32,18 @@ pkgver() {
   cd "$srcdir/$_pkgname"
   # No tags yet; fall back to 0.1.0 plus commit count so upgrades still order
   # correctly. Once a tag exists the first branch takes over.
-  git describe --long --tags 2>/dev/null | sed 's/\([^-]*-g\)/r\1/;s/-/./g' ||
-    printf "0.1.0.r%s.g%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  #
+  # The describe is tested on its own rather than piped into sed with a `||`
+  # fallback: a pipeline reports the *last* command's status, and sed happily
+  # succeeds on empty input, so the fallback would never run and pkgver would
+  # come out empty.
+  local described
+  if described=$(git describe --long --tags 2>/dev/null) && [[ -n $described ]]; then
+    printf '%s' "$described" | sed 's/\([^-]*-g\)/r\1/;s/-/./g'
+  else
+    printf '0.1.0.r%s.g%s' \
+      "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  fi
 }
 
 build() {
