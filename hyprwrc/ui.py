@@ -1242,24 +1242,31 @@ class EditorWindow(Adw.ApplicationWindow):
             )
             empty.add_prefix(Gtk.Image.new_from_icon_name(
                 "dialog-information-symbolic"))
+            lst.append(empty)
+
+            # The buttons get their own row rather than riding along as a
+            # suffix. An ActionRow gives its suffix all the width it asks for
+            # and squeezes the title into whatever is left, so three buttons
+            # collapse the text to one character per line.
             buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
-                              valign=Gtk.Align.CENTER)
+                              halign=Gtk.Align.END, margin_top=10,
+                              margin_bottom=10, margin_start=12, margin_end=12)
             reuse = Gtk.Button(label="Use an existing rule",
-                               valign=Gtk.Align.CENTER,
                                tooltip_text="Clone one of your rules for this "
                                             "window, or add this window to it")
             reuse.connect("clicked", lambda *_: self._open_reuse())
             buttons.append(reuse)
-            from_tpl = Gtk.Button(label="Create from template",
-                                  valign=Gtk.Align.CENTER)
+            from_tpl = Gtk.Button(label="Create from template")
             from_tpl.connect("clicked", lambda *_: self._open_templates())
             buttons.append(from_tpl)
-            create = Gtk.Button(label="Create a rule", valign=Gtk.Align.CENTER)
+            create = Gtk.Button(label="Create a rule")
             create.add_css_class("suggested-action")
             create.connect("clicked", lambda *_: self._start_new_rule())
             buttons.append(create)
-            empty.add_suffix(buttons)
-            lst.append(empty)
+
+            button_row = Gtk.ListBoxRow(activatable=False, selectable=False)
+            button_row.set_child(buttons)
+            lst.append(button_row)
             return
 
         if self.showing_all:
