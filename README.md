@@ -312,6 +312,37 @@ silently never fires.
 static effects are evaluated against the values a window had *at map time*, so
 matching the live title of a browser tab does not do what it looks like.
 
+**Reusing a rule you already have.** Most of the time the rule you want already
+exists for a different window. The copy button next to the `+`, and the "Use an
+existing rule" button in the empty state, open a searchable list of every rule
+in the config with two things you can do to each:
+
+- **Clone** — a new draft that does what that rule does, aimed at the window in
+  the editor. Effects come across; the class/title matchers are replaced with
+  this window's, since a copy that kept them would fight the original. State
+  matchers like `xwayland` or `float` are kept — they are conditions the author
+  meant, and dropping them would silently widen the rule. Nothing is written
+  until you save.
+- **Add this window** — leaves the rule where it is and widens it, turning
+  `^kitty$` into `^(kitty|Alacritty)$`. This is the multi-value `+` above,
+  applied to a rule already on disk.
+
+Adding edits the rule in place, including in files this tool did not write, so
+it is deliberately narrow: **only the quoted value of one match field is
+replaced**. Formatting, comments, field order and any key the form has no field
+for are left byte-for-byte alone, and the dialog shows the exact before/after
+first. When the value cannot be located unambiguously — a rule built from a
+variable, a `["class"]` subscript — the edit is refused rather than guessed at,
+and cloning is offered instead. The usual guarantees still apply on top: the
+whole file is compile-checked before anything touches disk, backed up, and
+restored if Hyprland rejects the result.
+
+If the rule matches on more than one identity field it asks which to widen,
+because picking for you would change what the rule means. If the value being
+added has already drifted since the window opened — a shell prompt in a title,
+an Electron app rewriting its class — the confirmation says so, since a rule
+pinned to a value like that quietly stops matching.
+
 **Preview.** A window rule only fires when a window maps, so previewing means
 reproducing the effects through a second mechanism:
 

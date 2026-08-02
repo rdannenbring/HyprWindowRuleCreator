@@ -419,28 +419,15 @@ class RuleStore:
     # -- foreign files ----------------------------------------------------
 
     @staticmethod
-    def toggle_foreign(path: Path, site, enable: bool,
-                       verify: bool = True, keep: int = 10) -> SaveResult:
-        """Comment out (or restore) one rule in a file this tool did not write.
+    def _replace_foreign(path: Path, site, new_chunk: str,
+                         verify: bool = True, keep: int = 10) -> SaveResult:
+        """Swap one rule's source in a file this tool did not write.
 
-        Deliberately the only write we make to foreign config, and never a
-        delete: commenting is reversible and obvious in a diff, so a wrong
-        guess about which rule to touch stays recoverable. The file is backed
-        up first and restored if Hyprland rejects the result.
+        Every foreign write goes through here so they all get the same
+        guarantees: compile the whole file before touching disk, back it up,
+        and put the original back if Hyprland rejects the result.
         """
         original = path.read_text()
-        chunk = original[site.start:site.end]
-        marker = "--" if path.suffix == ".lua" else "#"
-
-        if enable:
-            new_chunk = "\n".join(
-                re.sub(rf"^(\s*){re.escape(marker)} ?", r"\1", ln)
-                for ln in chunk.splitlines())
-        else:
-            new_chunk = "\n".join(
-                ln if not ln.strip() else f"{marker} {ln}"
-                for ln in chunk.splitlines())
-
         text = original[:site.start] + new_chunk + original[site.end:]
         result = SaveResult(path, "foreign", None, reloaded=False)
 
@@ -464,6 +451,41 @@ class RuleStore:
                 result.config_errors = errors
                 result.rolled_back = True
         return result
+
+    @staticmethod
+    def toggle_foreign(path: Path, site, enable: bool,
+                       verify: bool = True, keep: int = 10) -> SaveResult:
+        """Comment out (or restore) one rule in a file this tool did not write.
+
+        Never a delete: commenting is reversible and obvious in a diff, so a
+        wrong guess about which rule to touch stays recoverable.
+        """
+        original = path.read_text()
+        chunk = original[site.start:site.end]
+        marker = "--" if path.suffix == ".lua" else "#"
+
+        if enable:
+            new_chunk = "\n".join(
+                re.sub(rf"^(\s*){re.escape(marker)} ?", r"\1", ln)
+                for ln in chunk.splitlines())
+        else:
+            new_chunk = "\n".join(
+                ln if not ln.strip() else f"{marker} {ln}"
+                for ln in chunk.splitlines())
+
+        return RuleStore._replace_foreign(path, site, new_chunk, verify, keep)
+
+    @staticmethod
+    def amend_foreign(path: Path, site, new_chunk: str,
+                      verify: bool = True, keep: int = 10) -> SaveResult:
+        """Rewrite one rule in a foreign file, in place.
+
+        The second and last kind of foreign write. Unlike the toggle this does
+        change what a rule means, so the caller is expected to have shown the
+        exact before/after first -- `merge.splice` only ever swaps one quoted
+        value, which is what makes that diff small enough to read.
+        """
+        return RuleStore._replace_foreign(path, site, new_chunk, verify, keep)
 
     # -- verification -----------------------------------------------------
 

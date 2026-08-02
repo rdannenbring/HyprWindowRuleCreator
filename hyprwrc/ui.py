@@ -23,7 +23,7 @@ try:
 except (ValueError, ImportError):  # pragma: no cover - depends on host
     HAVE_SOURCEVIEW = False
 
-from . import (catalog, emit, ipc, model, picker,  # noqa: E402
+from . import (catalog, emit, ipc, merge, model, picker,  # noqa: E402
                preview as preview_mod, scan, store, templates)
 from .model import Rule  # noqa: E402
 from . import gtkutil  # noqa: E402
@@ -384,11 +384,22 @@ class EditorWindow(Adw.ApplicationWindow):
         self.add_btn.add_css_class("flat")
         self.add_btn.connect("clicked", lambda *_: self._on_add_clicked())
 
+        # Reuse sits next to + because it answers the same question -- "how do
+        # I get a rule for this window" -- and the answer is usually that one
+        # already exists somewhere. Only in the window scope: both of the
+        # actions behind it are about the window currently in the editor.
+        self.reuse_btn = Gtk.Button(
+            icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER,
+            tooltip_text="Clone an existing rule, or add this window to one")
+        self.reuse_btn.add_css_class("flat")
+        self.reuse_btn.connect("clicked", lambda *_: self._open_reuse())
+
         # + travels with the tabs rather than sitting at the far edge of the
         # window: it acts on whichever list the tabs select, and parked on the
         # right it would hang over the code pane it has nothing to do with.
         centre = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         centre.append(self.scope_toggle)
+        centre.append(self.reuse_btn)
         centre.append(self.add_btn)
 
         self.scope_bar = Gtk.CenterBox(margin_top=4, margin_bottom=8,
@@ -1112,6 +1123,7 @@ class EditorWindow(Adw.ApplicationWindow):
                 "property is the one that wins.")
             self.add_btn.set_tooltip_text("Start a new blank rule")
         self.rules_search.set_visible(self.showing_all or self.showing_templates)
+        self.reuse_btn.set_visible(not self.showing_templates)
 
     def _needle(self) -> str:
         if not (self.showing_all or self.showing_templates):
@@ -1232,6 +1244,12 @@ class EditorWindow(Adw.ApplicationWindow):
                 "dialog-information-symbolic"))
             buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
                               valign=Gtk.Align.CENTER)
+            reuse = Gtk.Button(label="Use an existing rule",
+                               valign=Gtk.Align.CENTER,
+                               tooltip_text="Clone one of your rules for this "
+                                            "window, or add this window to it")
+            reuse.connect("clicked", lambda *_: self._open_reuse())
+            buttons.append(reuse)
             from_tpl = Gtk.Button(label="Create from template",
                                   valign=Gtk.Align.CENTER)
             from_tpl.connect("clicked", lambda *_: self._open_templates())
@@ -1670,6 +1688,17 @@ class EditorWindow(Adw.ApplicationWindow):
         if found.editable and not is_editing:
             button("document-edit-symbolic", "Load into the form",
                    lambda *_: self._load_rule(found))
+
+        # Reuse, offered where the rules are actually browsed. Adding is only
+        # shown when it would do something -- a rule the window is already
+        # covered by, or one matching on nothing this window has, would give a
+        # button whose only outcome is an explanation of why it did nothing.
+        if merge.extendable_fields(found.rule, self.window_info) and not (
+                found.editable is False and found.site is None):
+            button("list-add-symbolic", "Add this window to this rule",
+                   lambda *_: self._extend_rule_with_window(found))
+        button("edit-paste-symbolic", "Clone this rule for this window",
+               lambda *_: self._clone_rule_for_window(found))
         button(
             "media-playback-start-symbolic" if not found.enabled
             else "media-playback-pause-symbolic",
@@ -1790,6 +1819,148 @@ class EditorWindow(Adw.ApplicationWindow):
                 return
             self._toast("Deleted")
             self._rescan()
+
+        dialog.connect("response", answered)
+        dialog.present(self)
+
+    # -- reusing an existing rule -----------------------------------------
+
+    def _all_rules(self) -> list[scan.FoundRule]:
+        """Every rule in the config, whatever it matches.
+
+        Read fresh rather than reusing self.existing: in the This Window scope
+        that list holds only the rules that already apply, which is exactly the
+        set a user reaching for "reuse an existing rule" is not looking at.
+        """
+        try:
+            return scan.find_all(self.store.config_dir, self.store.path,
+                                 self.store.dialect)
+        except (ipc.HyprError, OSError) as exc:
+            self._toast(f"Could not read your config: {exc}")
+            return []
+
+    def _open_reuse(self):
+        rules = self._all_rules()
+        if not rules:
+            self._toast("No existing rules to reuse")
+            return
+        from .reuse_ui import ReuseRuleDialog
+        ReuseRuleDialog(
+            rules, self.window_info,
+            on_clone=self._clone_rule_for_window,
+            on_extend=self._extend_rule_with_window,
+        ).present(self)
+
+    def _clone_rule_for_window(self, found: scan.FoundRule):
+        """Load a copy of `found` into the form, aimed at the picked window."""
+        def proceed():
+            self.scope_toggle.set_active_name("window")
+            self._reset_form()
+            self._template_edit = None
+            rule = merge.clone_for_window(found.rule, self.window_info)
+            self._apply_rule_to_form(rule)
+            self._draft = True
+            self._rebuild_existing()
+            self._refresh()
+            # A clone is a deliberate choice, like loading a template: losing
+            # it to an accidental close would be the same annoyance as losing
+            # typing, so it counts as unsaved work.
+            self._baseline = None
+            dropped = model.unknown_keys(found.rule)
+            self._toast(
+                f"Cloned “{found.name}” — nothing saved yet" +
+                (f", dropped unknown: {', '.join(dropped)}" if dropped else ""))
+
+        if self._is_dirty():
+            self._confirm_discard(proceed)
+        else:
+            proceed()
+
+    def _extend_rule_with_window(self, found: scan.FoundRule):
+        """Widen an existing rule so it also matches the picked window."""
+        fields = merge.extendable_fields(found.rule, self.window_info)
+        if not fields:
+            self._toast("This rule has no class or title to add a window to")
+            return
+        if len(fields) == 1:
+            self._confirm_extend(found, fields[0])
+            return
+
+        # More than one identity field: widening the wrong one changes what the
+        # rule means, so it is not a guess worth making on the user's behalf.
+        dialog = Adw.AlertDialog(
+            heading="Which field should match this window too?",
+            body=(f"“{found.name}” matches on more than one. Adding to just "
+                  "one of them is usually what you want — every match field "
+                  "has to pass, so widening one keeps the others in force."),
+        )
+        dialog.add_response("cancel", "Cancel")
+        for key in fields:
+            dialog.add_response(key, f"{key} = {merge.window_value(self.window_info, key)}")
+        dialog.set_default_response("cancel")
+        dialog.connect(
+            "response",
+            lambda _d, r: None if r == "cancel" else self._confirm_extend(found, r))
+        dialog.present(self)
+
+    def _confirm_extend(self, found: scan.FoundRule, prop: str):
+        """Show the exact before/after, then write it."""
+        source = (found.site.uncommented() if found.site is not None
+                  else self.store.read_block(found.managed_id) or "")
+        dialect = "conf" if found.path.suffix == ".conf" else "lua"
+        try:
+            new_source, new_pattern = merge.plan_extend(
+                found.rule, source, self.window_info, prop, dialect)
+        except merge.Refused as why:
+            self._toast(f"Cannot add this window: {why}")
+            return
+
+        old_pattern = str((found.rule.get("match") or {})[prop])
+        where = ("in your generated rules file" if found.editable
+                 else f"in {found.path.name}, a file {outside_app()}")
+
+        # A value that has already drifted once will drift again, and the rule
+        # would quietly stop matching. Worth saying before the write, not after.
+        caution = ""
+        if prop == "title" and model.title_is_volatile(self.window_info):
+            caution = ("\n\nThis window's title has already changed since it "
+                       "opened, so matching on it may not keep working. "
+                       "initial_title holds the title it opened with.")
+        elif prop == "class" and (
+                self.window_info.get("class") !=
+                self.window_info.get("initialClass")):
+            caution = ("\n\nThis window's class differs from the one it opened "
+                       "with, so matching on class may not keep working. "
+                       "initial_class holds the original.")
+
+        dialog = Adw.AlertDialog(
+            heading="Add this window to the rule?",
+            body=(f"“{found.name}” {where}.\n\n"
+                  f"{prop}\n"
+                  f"  before   {old_pattern}\n"
+                  f"  after    {new_pattern}\n\n"
+                  "Nothing else in the rule changes. A timestamped backup is "
+                  "written first, and the config is restored if Hyprland "
+                  "rejects the result." + caution),
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("go", "Add this window")
+        dialog.set_response_appearance("go", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("cancel")
+
+        def answered(_d, response):
+            if response != "go":
+                return
+            try:
+                if found.editable:
+                    result = self.store.update_raw(found.managed_id, new_source)
+                else:
+                    result = store.RuleStore.amend_foreign(
+                        found.path, found.site, new_source)
+            except (ValueError, ipc.HyprError, OSError) as exc:
+                self._toast(f"Could not change: {exc}")
+                return
+            self._after_write(result, f"Added this window to “{found.name}”")
 
         dialog.connect("response", answered)
         dialog.present(self)
