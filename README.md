@@ -59,9 +59,11 @@ along with where the recipe came from.
 yay -S hyprwrc-git
 ```
 
-Not submitted to the AUR yet — the `PKGBUILD` and `.SRCINFO` live in
-[`packaging/`](packaging/) and build today with `makepkg`. See
-[packaging/README.md](packaging/README.md) for how to publish it.
+Published as
+[`hyprwrc-git`](https://aur.archlinux.org/packages/hyprwrc-git), a VCS package
+tracking `main`. The `PKGBUILD` and `.SRCINFO` also live in
+[`packaging/`](packaging/) if you would rather build from the checkout; see
+[packaging/README.md](packaging/README.md) for the maintainer notes.
 
 ### From a checkout
 
@@ -244,7 +246,9 @@ before you see it resolve.
 When nothing matches, the list says so and offers to start one:
 
 > **No matching rules found for this window**
-> Nothing in your config applies to it yet. Would you like to create one?  **[Create a rule]**
+> Nothing in your config applies to it yet.
+>
+> **[Use an existing rule]  [Create from template]  [Create new rule]**
 
 Per-rule actions:
 
@@ -323,7 +327,7 @@ in the config with two things you can do to each:
   matchers like `xwayland` or `float` are kept — they are conditions the author
   meant, and dropping them would silently widen the rule. Nothing is written
   until you save.
-- **Add this window** — leaves the rule where it is and widens it, turning
+- **Add this window to match condition** — leaves the rule where it is and widens it, turning
   `^kitty$` into `^(kitty|Alacritty)$`. This is the multi-value `+` above,
   applied to a rule already on disk.
 

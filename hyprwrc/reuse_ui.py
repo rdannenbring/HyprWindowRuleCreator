@@ -125,7 +125,8 @@ class ReuseRuleDialog(Adw.Dialog):
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
                           valign=Gtk.Align.CENTER)
 
-        add = Gtk.Button(label="Add this window", valign=Gtk.Align.CENTER)
+        add = Gtk.Button(label="Add this window to match condition",
+                         valign=Gtk.Align.CENTER)
         why = self._cannot_extend(found)
         if why:
             add.set_sensitive(False)

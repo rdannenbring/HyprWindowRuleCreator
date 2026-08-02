@@ -1259,7 +1259,7 @@ class EditorWindow(Adw.ApplicationWindow):
             from_tpl = Gtk.Button(label="Create from template")
             from_tpl.connect("clicked", lambda *_: self._open_templates())
             buttons.append(from_tpl)
-            create = Gtk.Button(label="Create a rule")
+            create = Gtk.Button(label="Create new rule")
             create.add_css_class("suggested-action")
             create.connect("clicked", lambda *_: self._start_new_rule())
             buttons.append(create)
@@ -1951,7 +1951,7 @@ class EditorWindow(Adw.ApplicationWindow):
                   "rejects the result." + caution),
         )
         dialog.add_response("cancel", "Cancel")
-        dialog.add_response("go", "Add this window")
+        dialog.add_response("go", "Add this window to match condition")
         dialog.set_response_appearance("go", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("cancel")
 
