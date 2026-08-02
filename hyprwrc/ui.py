@@ -1889,6 +1889,15 @@ class EditorWindow(Adw.ApplicationWindow):
         if not fields:
             self._toast("This rule has no class or title to add a window to")
             return
+        # Fields that already cover this window are dropped rather than offered
+        # and then refused. If every one does, say so instead of asking.
+        match = found.rule.get("match") or {}
+        widenable = [k for k in fields if not merge.already_covered(
+            str(match[k]), merge.window_value(self.window_info, k))]
+        if not widenable:
+            self._toast(f"“{found.name}” already matches this window")
+            return
+        fields = widenable
         if len(fields) == 1:
             self._confirm_extend(found, fields[0])
             return
@@ -1951,7 +1960,7 @@ class EditorWindow(Adw.ApplicationWindow):
                   "rejects the result." + caution),
         )
         dialog.add_response("cancel", "Cancel")
-        dialog.add_response("go", "Add this window to match condition")
+        dialog.add_response("go", "Add this window")
         dialog.set_response_appearance("go", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("cancel")
 

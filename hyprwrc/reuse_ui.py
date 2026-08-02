@@ -125,15 +125,13 @@ class ReuseRuleDialog(Adw.Dialog):
         actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
                           valign=Gtk.Align.CENTER)
 
-        add = Gtk.Button(label="Add this window to match condition",
-                         valign=Gtk.Align.CENTER)
+        add = Gtk.Button(label="Add this window", valign=Gtk.Align.CENTER)
         why = self._cannot_extend(found)
         if why:
             add.set_sensitive(False)
             add.set_tooltip_text(why)
         else:
-            add.set_tooltip_text(
-                "Widen this rule so it also matches the current window")
+            add.set_tooltip_text(self._extend_tooltip(found))
             add.connect("clicked", lambda *_: self._chose(self._on_extend, found))
         actions.append(add)
 
@@ -147,9 +145,30 @@ class ReuseRuleDialog(Adw.Dialog):
         row.add_suffix(actions)
         return row
 
+    def _extend_tooltip(self, found: scan.FoundRule) -> str:
+        """What widening this rule would actually do, in concrete terms.
+
+        The button says "Add this window"; the detail belongs here, where it
+        can name the field and show the real before/after rather than
+        describing the operation in the abstract.
+        """
+        head = ("Adds this window to the rule's match condition. The rule "
+                "stays where it is and nothing else about it changes.")
+        match = found.rule.get("match") or {}
+        fields = merge.extendable_fields(found.rule, self.window_info)
+        if len(fields) > 1:
+            return (f"{head}\n\nThis rule matches on "
+                    + ", ".join(fields)
+                    + " — you will be asked which one to widen.")
+        key = fields[0]
+        old = str(match[key])
+        new = merge.extended_pattern(old, merge.window_value(self.window_info, key))
+        return f"{head}\n\n{key}\n  {old}\n  → {new}"
+
     def _cannot_extend(self, found: scan.FoundRule) -> str:
         """Why "add this window" is unavailable, or "" when it is."""
-        if not merge.extendable_fields(found.rule, self.window_info):
+        fields = merge.extendable_fields(found.rule, self.window_info)
+        if not fields:
             if merge.identity_fields(found.rule):
                 return ("This window has no value for the field this rule "
                         "matches on — clone it instead.")
@@ -159,6 +178,15 @@ class ReuseRuleDialog(Adw.Dialog):
             return (f"This rule is {outside_app()} and its exact position in "
                     "the file could not be located, so it cannot be edited "
                     "in place. Clone it instead.")
+        # Every field it could widen already covers this window. Letting the
+        # click through would only produce a toast saying nothing happened.
+        match = found.rule.get("match") or {}
+        if all(merge.already_covered(str(match[k]),
+                                     merge.window_value(self.window_info, k))
+               for k in fields):
+            return ("This rule's "
+                    + " and ".join(fields)
+                    + " already matches this window.")
         return ""
 
     def _chose(self, callback, found: scan.FoundRule):

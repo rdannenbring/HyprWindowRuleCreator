@@ -327,7 +327,7 @@ in the config with two things you can do to each:
   matchers like `xwayland` or `float` are kept — they are conditions the author
   meant, and dropping them would silently widen the rule. Nothing is written
   until you save.
-- **Add this window to match condition** — leaves the rule where it is and widens it, turning
+- **Add this window** — leaves the rule where it is and widens it, turning
   `^kitty$` into `^(kitty|Alacritty)$`. This is the multi-value `+` above,
   applied to a rule already on disk.
 
