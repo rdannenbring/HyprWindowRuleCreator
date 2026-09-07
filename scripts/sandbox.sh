@@ -113,15 +113,59 @@ run() {
       "$@"
 }
 
+# Remove the sandbox's own instance directory. Hyprland does not clear it on
+# exit, so without this every run leaks one into $XDG_RUNTIME_DIR/hypr.
+#
+# Takes the signature recorded at launch and nothing else -- the same rule that
+# decides which pid gets killed, for the same reason. Every guard below is
+# load-bearing rather than defensive habit: this is an `rm -rf` under
+# $XDG_RUNTIME_DIR, and an empty signature would aim it at the hypr directory
+# itself, taking the live session's socket with it.
+remove_instance_dir() {
+  local sig=$1 dir
+  if [[ -z $sig ]]; then
+    echo "no recorded signature; leaving the instance dir alone" >&2
+    return 0
+  fi
+  # Cannot happen -- `up` refuses to start when these match -- but this is the
+  # one place where being wrong deletes the running desktop's socket.
+  if [[ $sig == "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
+    echo "refusing: $sig is the live session's signature" >&2
+    return 0
+  fi
+  # A signature is one path segment. Anything with a slash or a leading dot
+  # would escape the directory the rm is meant to stay inside.
+  if [[ $sig == */* || $sig == .* ]]; then
+    echo "refusing: $sig is not a plain directory name" >&2
+    return 0
+  fi
+  if [[ -z ${XDG_RUNTIME_DIR:-} ]]; then
+    return 0
+  fi
+  dir="$XDG_RUNTIME_DIR/hypr/$sig"
+  if [[ -d $dir ]]; then
+    rm -rf -- "$dir"
+    echo "removed dir  $dir"
+  fi
+}
+
 down() {
   if [[ -s $PIDFILE ]]; then
+    local pid sig
     pid=$(cat "$PIDFILE")
+    # Read before the bookkeeping files are removed below.
+    sig=$(cat "$SIGFILE" 2>/dev/null || true)
     # Only ever this pid, and only if it is still a Hyprland.
     if [[ -r /proc/$pid/comm ]] && grep -qi hyprland "/proc/$pid/comm"; then
       kill "$pid" 2>/dev/null || true
       for _ in $(seq 1 25); do [[ -d /proc/$pid ]] || break; sleep 0.2; done
       [[ -d /proc/$pid ]] && kill -9 "$pid" 2>/dev/null || true
       echo "sandbox down pid=$pid"
+      # Only on the path where we know the process we started is the one that
+      # just died. In the branch below the pid belongs to something we did not
+      # start, which makes what that directory belongs to exactly the thing we
+      # do not know -- so it stays, and gets cleaned up by hand or not at all.
+      remove_instance_dir "$sig"
     else
       echo "pid $pid is not a running Hyprland; leaving it alone" >&2
     fi
