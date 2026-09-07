@@ -120,7 +120,8 @@ hyprwrc list                 # list selectable windows
 hyprwrc rules --at-cursor    # rules that already apply to a window
 hyprwrc templates            # list rule templates and their sources
 hyprwrc catalog              # every known prop and effect
-hyprwrc where                # where rules get written
+hyprwrc where                # where rules get written, and whether anything reads them
+hyprwrc where --fix          # add the missing conf.d loader to your hyprland.lua
 hyprwrc gui --address 0x...  # skip selection entirely
 ```
 
@@ -383,7 +384,7 @@ when it does.
 **Saving.** Rules go to `conf.d/zz-windowrule-generated.{lua,conf}`, fenced by
 markers so they can be edited or removed later. Hand-edited config is never
 touched. If your `hyprland.lua` globs `conf.d/*.lua` it loads with no further
-setup.
+setup — and if it does not, `hyprwrc where` says so (see below).
 
 The `zz-` prefix is load-bearing. A glob sorts alphabetically, so a file named
 `windowrule-generated.lua` still loses to `windowrule-modal.lua` and
@@ -400,7 +401,47 @@ written.
 Every save is validated **before** anything touches disk, by compiling the
 prospective file in Hyprland's own Lua VM via `load()` (side-effect free).
 
-## Two things that bite
+## Three things that bite
+
+**A drop-in file nobody loads is silent, not broken.** A stock Omarchy
+`hyprland.lua` has an explicit `require("hypr.monitors")` list and no glob, so
+nothing ever opens `conf.d/`. Rules written there are correct, valid, and
+completely inert. Nothing reports it: `hyprctl configerrors` stays clean
+*because* the file is never read, and reloading succeeds. A user hit this and
+reasonably concluded the app was broken.
+
+So the app checks. `reach.py` starts at your `hyprland.lua`, follows `require`
+and `dofile`, and looks for something that would reach the target — a glob
+covering it or a load of it by name. Comments are stripped first: a
+commented-out loader is the most likely way to look loaded and not be. The Lua
+is read, never run.
+
+```
+$ hyprwrc where
+  target file /home/you/.config/hypr/conf.d/zz-windowrule-generated.lua
+  exists      True
+  loaded      NO — nothing in hyprland.lua reads conf.d/
+```
+
+The editor shows the same thing as a banner across the top, with a **How to
+fix** button, and stops claiming success on save while it is true. `hyprwrc
+where --fix` appends the loader for you, after showing it and asking:
+
+```lua
+do
+  local pipe = io.popen('ls -1 "' .. os.getenv("HOME") .. '/.config/hypr/conf.d"/*.lua 2>/dev/null')
+  if pipe then
+    for path in pipe:lines() do dofile(path) end
+    pipe:close()
+  end
+end
+```
+
+Sorted, so the `zz-` prefix still wins. `*.lua` also means the timestamped
+`.bak.<stamp>` files this tool leaves beside the target are skipped — they do
+not end in `.lua`. If you would rather not have the glob, `hyprwrc where` also
+lists the files your config demonstrably does read, any of which can be made
+the target in settings.
 
 **`configerrors` cannot be trusted for Lua.** A `.lua` file pulled in by a
 `loadfile()`-style glob reports syntax errors on *stderr*. `hyprctl

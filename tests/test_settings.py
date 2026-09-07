@@ -141,8 +141,8 @@ def test_backup_name_collision_within_one_second():
     try:
         target = tmp / "rules.lua"
         target.write_text("x")
-        a = store._write_backup(target)
-        b = store._write_backup(target)
+        a = store.write_backup(target)
+        b = store.write_backup(target)
         assert a != b, "two writes in the same second must not overwrite"
     finally:
         shutil.rmtree(tmp)

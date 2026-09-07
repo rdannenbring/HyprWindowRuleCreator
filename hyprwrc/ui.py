@@ -24,7 +24,7 @@ except (ValueError, ImportError):  # pragma: no cover - depends on host
     HAVE_SOURCEVIEW = False
 
 from . import (catalog, emit, ipc, merge, model, picker,  # noqa: E402
-               preview as preview_mod, scan, store, templates)
+               preview as preview_mod, reach, scan, store, templates)
 from .model import Rule  # noqa: E402
 from . import gtkutil  # noqa: E402
 from . import branding  # noqa: E402
@@ -287,6 +287,7 @@ class EditorWindow(Adw.ApplicationWindow):
         self.template_store = templates.TemplateStore()
         self._rows_match: dict[str, FieldRow] = {}
         self._rows_effect: dict[str, FieldRow] = {}
+        self._reach = None            # set by _check_reach
 
         try:
             self.existing = scan.find_for_window(
@@ -310,8 +311,18 @@ class EditorWindow(Adw.ApplicationWindow):
         self.stack.add_named(self._build_compact(), "compact")
         self.stack.set_visible_child_name("full")
 
+        # Above everything, because it is not about the rule being edited: it
+        # says whether saving one can have any effect at all.
+        self.reach_banner = Adw.Banner(revealed=False)
+        if hasattr(self.reach_banner, "set_use_markup"):
+            self.reach_banner.set_use_markup(False)
+        self.reach_banner.set_button_label("How to fix")
+        self.reach_banner.connect("button-clicked",
+                                  lambda *_: self._show_reach_fix())
+
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(self.header)
+        toolbar.add_top_bar(self.reach_banner)
         toolbar.add_top_bar(scope_bar)
         toolbar.set_content(self.stack)
         toolbar.add_bottom_bar(self.footer)
@@ -320,6 +331,7 @@ class EditorWindow(Adw.ApplicationWindow):
         self.set_content(self.toast_overlay)
 
         self._seed_from_window()
+        self._check_reach()
         self._refresh()
 
         # One rule of ours, unambiguously this window's: just open it. Anything
@@ -508,6 +520,7 @@ class EditorWindow(Adw.ApplicationWindow):
         self._compact = compact
         self.header.set_visible(not compact)
         self.footer.set_visible(not compact)
+        self.reach_banner.set_visible(not compact)
 
         # Order matters. A Stack still measures hidden children, so the strip
         # cannot shrink below the full editor's minimum until the big child is
@@ -1368,8 +1381,10 @@ class EditorWindow(Adw.ApplicationWindow):
                 problems.append(str(exc))
         self._rescan_only()
         self._rebuild_existing()
-        self._toast("Reactivated" if enable else "Deactivated" if not problems
-                    else "Finished with problems — see the notes")
+        note = self._reach_note() if (enable and not problems
+                                      and not self._check_reach()) else ""
+        self._toast(("Reactivated" if enable else "Deactivated" if not problems
+                     else "Finished with problems — see the notes") + note)
         if problems:
             self.report.set_label("\n".join(problems))
 
@@ -1734,6 +1749,10 @@ class EditorWindow(Adw.ApplicationWindow):
         if result.rolled_back:
             self._toast(f"{verb} rejected — config rolled back")
             self.report.set_label(result.config_errors)
+        elif result.path == self.store.path and not self._check_reach():
+            # Only our own file can be unreachable. A foreign rule was edited
+            # where it already lives, so it is loaded by definition.
+            self._toast(verb + self._reach_note())
         else:
             self._toast(verb)
         self._rescan()
@@ -2042,7 +2061,9 @@ class EditorWindow(Adw.ApplicationWindow):
         # "this window" would give no sign that anything happened.
         self.scope_toggle.set_active_name("all")
         self._rescan()
-        self._toast(f"Activated “{template.title}” — added to your rules")
+        self._check_reach()
+        self._toast(f"Activated “{template.title}” — added to your rules"
+                    + self._reach_note())
 
     def _edit_template(self, template: templates.Template, is_new: bool = False):
         """Edit a template using the same form as a rule."""
@@ -2526,7 +2547,111 @@ class EditorWindow(Adw.ApplicationWindow):
         self.save_btn.set_label("Update & Reload")
         self._rescan()
         self._set_baseline()
-        self._toast(f"{verb} {result.path.name} and reloaded — Esc to close")
+
+        # Written and reloaded is not the same as in force. Re-checked after
+        # the write rather than trusted from startup: the fix may have been
+        # applied in another window in the meantime, and the file may only now
+        # have been created.
+        if self._check_reach():
+            self._toast(f"{verb} {result.path.name} and reloaded — Esc to close")
+        else:
+            self._toast(f"{verb} {result.path.name}{self._reach_note()}")
+            self.report.set_label(
+                f"{self._reach.detail().capitalize()}. "
+                + self._reach.explanation()
+                + " Use “How to fix” at the top of the window."
+            )
+
+    # -- is the generated file read at all? -------------------------------
+
+    def _check_reach(self) -> bool:
+        """Refresh the banner. Returns True when the target file is loaded.
+
+        A save that reloads without complaint proves the rule compiles, not
+        that it applies: a drop-in file nothing requires is never opened, and
+        `configerrors` stays empty precisely because of that. Without this the
+        editor reports success for a rule that cannot do anything.
+        """
+        try:
+            self._reach = self.store.reachability()
+        except OSError:
+            self._reach = None
+            return True       # cannot tell; do not cry wolf
+        loaded = self._reach.loaded
+        if not loaded:
+            self.reach_banner.set_title(
+                f"Rules saved here never take effect — {self._reach.detail()}")
+        self.reach_banner.set_revealed(not loaded)
+        return loaded
+
+    def _reach_note(self) -> str:
+        """The line appended to a success toast when the file is inert."""
+        if self._reach is None or self._reach.loaded:
+            return ""
+        return " — but nothing loads that file yet, so it has no effect"
+
+    def _show_reach_fix(self):
+        """Show the loader that is missing, and offer to add it."""
+        if self._reach is None or self._reach.loaded:
+            return
+        entry = self._reach.entrypoint
+        if entry is None or not entry.exists():
+            expected = reach.entrypoint_for(self.store.config_dir,
+                                            self.store.dialect)
+            self._toast(f"No {expected.name} to add it to")
+            return
+
+        snippet = reach.loader_snippet(self.store.path, self.store.dialect)
+        dialog = Adw.AlertDialog(
+            heading="Nothing loads your generated rules",
+            body=(f"{self._reach.detail().capitalize()}, so every rule this "
+                  f"app writes is valid and inert. Hyprland reports no error, "
+                  f"because the file is never read.\n\n"
+                  f"This can be appended to {entry}:"),
+        )
+        # The exact text, in a scrollable monospace block. Editing someone's
+        # hand-maintained entrypoint without showing what goes in would be the
+        # same kind of silent surprise this whole check exists to catch.
+        view = Gtk.TextView(editable=False, monospace=True,
+                            top_margin=8, bottom_margin=8,
+                            left_margin=8, right_margin=8)
+        view.get_buffer().set_text(snippet)
+        scroller = Gtk.ScrolledWindow(
+            child=view, min_content_height=180, propagate_natural_height=True,
+            hscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
+        scroller.add_css_class("card")
+        dialog.set_extra_child(scroller)
+
+        dialog.add_response("cancel", "Not now")
+        dialog.add_response("copy", "Copy")
+        dialog.add_response("add", "Add it for me")
+        dialog.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("add")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", self._on_reach_fix_response, snippet)
+        dialog.present(self)
+
+    def _on_reach_fix_response(self, _dialog, response: str, snippet: str):
+        if response == "copy":
+            Gdk.Display.get_default().get_clipboard().set(snippet)
+            self._toast("Copied — paste it at the bottom of your hyprland.lua")
+            return
+        if response != "add":
+            return
+        try:
+            entry, backup = reach.install_loader(
+                self.store.config_dir, self.store.path, self.store.dialect)
+        except OSError as exc:
+            self._toast(f"Could not write it: {exc}")
+            return
+        # Reload so the rules already in the file start applying now, rather
+        # than at the next login with no sign that anything changed.
+        with contextlib.suppress(ipc.HyprError):
+            ipc.reload()
+        self._check_reach()
+        self._toast(f"Added to {entry.name}"
+                    + (f" (backed up as {backup.name})" if backup else "")
+                    + " — your rules apply now")
 
     def _toast(self, message: str):
         self.toast_overlay.add_toast(gtkutil.toast(message, timeout=3))

@@ -14,15 +14,43 @@ SIGFILE="$RUN/instance.sig"
 WLFILE="$RUN/wayland.display"
 
 up() {
-  mkdir -p "$RUN/config/conf.d" "$RUN/xdg"
+  # One tree, read by both. These used to be two: Hyprland was launched against
+  # $RUN/config while `run` pointed the app's XDG_CONFIG_HOME at
+  # $RUN/config-home. So the app wrote rules into a directory the nested
+  # compositor never opened, and the sandbox reproduced -- permanently, and
+  # invisibly -- the exact bug `hyprwrc where` exists to catch. Nothing saved
+  # here could ever have been seen to take effect.
+  local cfg="$RUN/config-home/hypr"
+  mkdir -p "$cfg/conf.d" "$RUN/xdg"
+
+  # Cleared, not carried over. Generated rules are re-evaluated on every
+  # reload, so one bad file makes `configerrors` non-empty forever and every
+  # verified write rolls itself back -- and unlike hyprland.lua below, it would
+  # survive teardown and quietly break every later run. Each sandbox starts
+  # from nothing, the same way the entrypoint does.
+  rm -f "$cfg/conf.d"/*.lua "$cfg/conf.d"/*.lua.bak.*
+
   # Deliberately a .lua config: `repl` -- which is how rules are parsed and
   # config is compile-checked -- exists only under the Lua config manager. A
   # hyprlang sandbox boots fine and then fails every test for the wrong reason.
-  # Left empty on purpose. Anything in here is re-evaluated on every reload,
-  # so a single wrong API call makes `configerrors` non-empty forever and every
-  # verified write rolls itself back -- a failure that looks exactly like the
-  # code under test being broken.
-  : > "$RUN/config/hyprland.lua"
+  #
+  # The conf.d glob is the only thing in here, and it is the same loader
+  # `hyprwrc where --fix` writes: without it a saved rule cannot be observed
+  # applying, which is most of what this sandbox is for. Nothing else belongs
+  # in this file -- anything here is re-evaluated on every reload, so a single
+  # wrong API call makes `configerrors` non-empty forever and every verified
+  # write rolls itself back, a failure that looks exactly like the code under
+  # test being broken.
+  cat > "$cfg/hyprland.lua" <<LUA
+-- Sandbox entrypoint. Loads drop-in rule files the way a real config must.
+do
+  local pipe = io.popen('ls -1 "$cfg/conf.d"/*.lua 2>/dev/null')
+  if pipe then
+    for path in pipe:lines() do dofile(path) end
+    pipe:close()
+  end
+end
+LUA
 
   # WAYLAND_DISPLAY and the session's XDG_RUNTIME_DIR both have to stay: the
   # nested compositor reaches its parent through them, and without a parent it
@@ -34,8 +62,8 @@ up() {
   wl_before=$(ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -E '^wayland-[0-9]+$' || true)
 
   env -u HYPRLAND_INSTANCE_SIGNATURE \
-      HYPRLAND_CONFIG="$RUN/config/hyprland.lua" \
-      Hyprland -c "$RUN/config/hyprland.lua" \
+      HYPRLAND_CONFIG="$cfg/hyprland.lua" \
+      Hyprland -c "$cfg/hyprland.lua" \
       > "$RUN/hyprland.log" 2>&1 &
   echo $! > "$PIDFILE"
 
@@ -71,6 +99,7 @@ up() {
 
   echo "sandbox up   pid=$(cat "$PIDFILE")  sig=$(cat "$SIGFILE")  display=$(cat "$WLFILE")"
   echo "real session sig is $HYPRLAND_INSTANCE_SIGNATURE -- must differ"
+  echo "config dir   $cfg (globbed, so saved rules actually apply)"
 }
 
 # Run a command inside the sandbox. Config dir points at the sandbox tree, so
@@ -84,15 +113,59 @@ run() {
       "$@"
 }
 
+# Remove the sandbox's own instance directory. Hyprland does not clear it on
+# exit, so without this every run leaks one into $XDG_RUNTIME_DIR/hypr.
+#
+# Takes the signature recorded at launch and nothing else -- the same rule that
+# decides which pid gets killed, for the same reason. Every guard below is
+# load-bearing rather than defensive habit: this is an `rm -rf` under
+# $XDG_RUNTIME_DIR, and an empty signature would aim it at the hypr directory
+# itself, taking the live session's socket with it.
+remove_instance_dir() {
+  local sig=$1 dir
+  if [[ -z $sig ]]; then
+    echo "no recorded signature; leaving the instance dir alone" >&2
+    return 0
+  fi
+  # Cannot happen -- `up` refuses to start when these match -- but this is the
+  # one place where being wrong deletes the running desktop's socket.
+  if [[ $sig == "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
+    echo "refusing: $sig is the live session's signature" >&2
+    return 0
+  fi
+  # A signature is one path segment. Anything with a slash or a leading dot
+  # would escape the directory the rm is meant to stay inside.
+  if [[ $sig == */* || $sig == .* ]]; then
+    echo "refusing: $sig is not a plain directory name" >&2
+    return 0
+  fi
+  if [[ -z ${XDG_RUNTIME_DIR:-} ]]; then
+    return 0
+  fi
+  dir="$XDG_RUNTIME_DIR/hypr/$sig"
+  if [[ -d $dir ]]; then
+    rm -rf -- "$dir"
+    echo "removed dir  $dir"
+  fi
+}
+
 down() {
   if [[ -s $PIDFILE ]]; then
+    local pid sig
     pid=$(cat "$PIDFILE")
+    # Read before the bookkeeping files are removed below.
+    sig=$(cat "$SIGFILE" 2>/dev/null || true)
     # Only ever this pid, and only if it is still a Hyprland.
     if [[ -r /proc/$pid/comm ]] && grep -qi hyprland "/proc/$pid/comm"; then
       kill "$pid" 2>/dev/null || true
       for _ in $(seq 1 25); do [[ -d /proc/$pid ]] || break; sleep 0.2; done
       [[ -d /proc/$pid ]] && kill -9 "$pid" 2>/dev/null || true
       echo "sandbox down pid=$pid"
+      # Only on the path where we know the process we started is the one that
+      # just died. In the branch below the pid belongs to something we did not
+      # start, which makes what that directory belongs to exactly the thing we
+      # do not know -- so it stays, and gets cleaned up by hand or not at all.
+      remove_instance_dir "$sig"
     else
       echo "pid $pid is not a running Hyprland; leaving it alone" >&2
     fi
