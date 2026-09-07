@@ -20,7 +20,7 @@ from pathlib import Path
 
 from . import emit, ipc
 from .model import Rule
-from .branding import APP_NAME, FENCE_TAG
+from .branding import APP_NAME, CLI_NAME, FENCE_TAG
 from .settings import Settings
 
 TEMPLATE_MARK = "from-template:"
@@ -35,10 +35,14 @@ HEADER_LUA = f"""\
 -- fenced blocks are managed: anything between the >>> and <<< markers may be
 -- rewritten or removed by the tool.
 --
--- Loaded automatically if your hyprland.lua globs conf.d/*.lua. The `zz-`
--- prefix makes this file sort last in that glob, so a rule at the bottom of
--- this file is the last one evaluated for any window it matches. Renaming the
--- file gives that away.
+-- Read only if something in your hyprland.lua loads conf.d/*.lua. Nothing
+-- warns you when that is missing -- the file is simply never opened, so every
+-- rule here is inert and `hyprctl configerrors` stays clean. Run
+-- `{CLI_NAME} where` to check, and `{CLI_NAME} where --fix` to add the loader.
+--
+-- The `zz-` prefix makes this file sort last in that glob, so a rule at the
+-- bottom of this file is the last one evaluated for any window it matches.
+-- Renaming the file gives that away.
 """
 
 HEADER_CONF = f"""\
@@ -47,7 +51,9 @@ HEADER_CONF = f"""\
 """
 
 
-def _write_backup(path: Path) -> Path:
+def write_backup(path: Path) -> Path:
+    """Copy `path` beside itself with a timestamp suffix. Never `.lua`, so a
+    `conf.d/*.lua` glob picks up the live file and not its history."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
     backup = path.with_suffix(path.suffix + f".bak.{stamp}")
     n = 1
@@ -161,12 +167,22 @@ class RuleStore:
             return None
         return text[start + len(begin):stop].strip("\n")
 
+    def reachability(self):
+        """Whether the config tree actually loads the target file.
+
+        Writing a rule and having it apply are separate things, and only this
+        answers the second one -- a save that reloads cleanly proves nothing
+        about a file nobody reads.
+        """
+        from . import reach
+        return reach.check(self.config_dir, self.path, self.dialect)
+
     # -- writes -----------------------------------------------------------
 
     def _backup(self) -> Path | None:
         if not self.path.exists():
             return None
-        backup = _write_backup(self.path)
+        backup = write_backup(self.path)
         prune_backups(self.path, self.prefs.backup_keep)
         return backup
 
@@ -438,7 +454,7 @@ class RuleStore:
                 result.rolled_back = True
                 return result
 
-        result.backup = _write_backup(path)
+        result.backup = write_backup(path)
         prune_backups(path, keep)
         path.write_text(text)
 

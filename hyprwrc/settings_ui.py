@@ -11,7 +11,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
-from . import store  # noqa: E402
+from . import emit, reach, store  # noqa: E402
 from .branding import APP_NAME  # noqa: E402
 from .settings import Settings  # noqa: E402
 from . import gtkutil  # noqa: E402
@@ -75,7 +75,17 @@ class SettingsDialog(Adw.PreferencesDialog):
         full = self.config_dir / self.prefs.generated_file
         exists = "exists" if full.exists() else "will be created on first save"
         self.file_note.set_title(str(full))
-        if self.prefs.sorts_last():
+
+        # Order of complaint matters. Losing to another conf.d file is a
+        # problem only once something reads conf.d at all -- telling someone
+        # their filename sorts badly while nothing loads the directory sends
+        # them to fix the wrong thing.
+        if not self._loaded():
+            self.file_note.set_subtitle(
+                f"{exists} · NOT loaded — nothing in your config reads this "
+                "file, so rules saved here would have no effect")
+            self.file_note.add_css_class("warning")
+        elif self.prefs.sorts_last():
             self.file_note.set_subtitle(
                 f"{exists} · sorts last in a conf.d/* glob, so rules saved "
                 "here are evaluated after your other conf.d files")
@@ -86,6 +96,21 @@ class SettingsDialog(Adw.PreferencesDialog):
                 "may load after it and override rules saved here")
             self.file_note.add_css_class("warning")
 
+    def _loaded(self) -> bool:
+        """Whether the config tree reads the file the path box now points at.
+
+        Recomputed on every edit, because this is the screen where retargeting
+        to a file the config already reads is the alternative to adding a
+        loader -- and it should say so the moment the path changes.
+        """
+        dialect = (self.prefs.dialect if self.prefs.dialect != "auto"
+                   else emit.detect_dialect(self.config_dir))
+        try:
+            return reach.check(self.config_dir, self._target_path(),
+                               dialect).loaded
+        except OSError:
+            return True       # cannot tell; do not cry wolf
+
     def _apply_file(self, row):
         self.prefs.generated_file = row.get_text().strip()
         self.prefs.validate()
@@ -95,6 +120,7 @@ class SettingsDialog(Adw.PreferencesDialog):
 
     def _apply_dialect(self, row, _param):
         self.prefs.dialect = DIALECTS[row.get_selected()]
+        self._refresh_file_note()   # the suffix, and what reads it, both move
         self._save()
 
     # -- backups ----------------------------------------------------------

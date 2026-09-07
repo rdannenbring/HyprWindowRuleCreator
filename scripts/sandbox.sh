@@ -14,15 +14,43 @@ SIGFILE="$RUN/instance.sig"
 WLFILE="$RUN/wayland.display"
 
 up() {
-  mkdir -p "$RUN/config/conf.d" "$RUN/xdg"
+  # One tree, read by both. These used to be two: Hyprland was launched against
+  # $RUN/config while `run` pointed the app's XDG_CONFIG_HOME at
+  # $RUN/config-home. So the app wrote rules into a directory the nested
+  # compositor never opened, and the sandbox reproduced -- permanently, and
+  # invisibly -- the exact bug `hyprwrc where` exists to catch. Nothing saved
+  # here could ever have been seen to take effect.
+  local cfg="$RUN/config-home/hypr"
+  mkdir -p "$cfg/conf.d" "$RUN/xdg"
+
+  # Cleared, not carried over. Generated rules are re-evaluated on every
+  # reload, so one bad file makes `configerrors` non-empty forever and every
+  # verified write rolls itself back -- and unlike hyprland.lua below, it would
+  # survive teardown and quietly break every later run. Each sandbox starts
+  # from nothing, the same way the entrypoint does.
+  rm -f "$cfg/conf.d"/*.lua "$cfg/conf.d"/*.lua.bak.*
+
   # Deliberately a .lua config: `repl` -- which is how rules are parsed and
   # config is compile-checked -- exists only under the Lua config manager. A
   # hyprlang sandbox boots fine and then fails every test for the wrong reason.
-  # Left empty on purpose. Anything in here is re-evaluated on every reload,
-  # so a single wrong API call makes `configerrors` non-empty forever and every
-  # verified write rolls itself back -- a failure that looks exactly like the
-  # code under test being broken.
-  : > "$RUN/config/hyprland.lua"
+  #
+  # The conf.d glob is the only thing in here, and it is the same loader
+  # `hyprwrc where --fix` writes: without it a saved rule cannot be observed
+  # applying, which is most of what this sandbox is for. Nothing else belongs
+  # in this file -- anything here is re-evaluated on every reload, so a single
+  # wrong API call makes `configerrors` non-empty forever and every verified
+  # write rolls itself back, a failure that looks exactly like the code under
+  # test being broken.
+  cat > "$cfg/hyprland.lua" <<LUA
+-- Sandbox entrypoint. Loads drop-in rule files the way a real config must.
+do
+  local pipe = io.popen('ls -1 "$cfg/conf.d"/*.lua 2>/dev/null')
+  if pipe then
+    for path in pipe:lines() do dofile(path) end
+    pipe:close()
+  end
+end
+LUA
 
   # WAYLAND_DISPLAY and the session's XDG_RUNTIME_DIR both have to stay: the
   # nested compositor reaches its parent through them, and without a parent it
@@ -34,8 +62,8 @@ up() {
   wl_before=$(ls "$XDG_RUNTIME_DIR" 2>/dev/null | grep -E '^wayland-[0-9]+$' || true)
 
   env -u HYPRLAND_INSTANCE_SIGNATURE \
-      HYPRLAND_CONFIG="$RUN/config/hyprland.lua" \
-      Hyprland -c "$RUN/config/hyprland.lua" \
+      HYPRLAND_CONFIG="$cfg/hyprland.lua" \
+      Hyprland -c "$cfg/hyprland.lua" \
       > "$RUN/hyprland.log" 2>&1 &
   echo $! > "$PIDFILE"
 
@@ -71,6 +99,7 @@ up() {
 
   echo "sandbox up   pid=$(cat "$PIDFILE")  sig=$(cat "$SIGFILE")  display=$(cat "$WLFILE")"
   echo "real session sig is $HYPRLAND_INSTANCE_SIGNATURE -- must differ"
+  echo "config dir   $cfg (globbed, so saved rules actually apply)"
 }
 
 # Run a command inside the sandbox. Config dir points at the sandbox tree, so

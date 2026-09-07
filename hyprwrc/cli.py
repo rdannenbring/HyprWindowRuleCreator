@@ -100,16 +100,99 @@ def cmd_templates(args) -> int:
 
 
 def cmd_where(args) -> int:
+    from . import reach
+
     st = store.RuleStore()
+    status = st.reachability()
+
+    if args.fix:
+        return _fix_loader(st, status, assume_yes=args.yes)
+
     print(f"  config dir  {st.config_dir}")
     print(f"  dialect     {st.dialect}")
     print(f"  target file {st.path}")
     print(f"  exists      {st.path.exists()}")
+    # The one line that "exists: True" does not answer. A rule can be written,
+    # valid, and reloaded without complaint while nothing ever reads the file.
+    print(f"  loaded      {status.summary()}")
     ids = st.existing_ids()
     print(f"  managed     {len(ids)} rule(s){':' if ids else ''}")
     for rid in ids:
         print(f"    {rid}")
+
+    if status.loaded:
+        return 0
+
+    print()
+    print(status.explanation())
+    if status.entrypoint and status.entrypoint.exists():
+        print(f"\nAdd this near the bottom of {status.entrypoint}:\n")
+        for line in reach.loader_snippet(st.path, st.dialect).splitlines():
+            print(f"    {line}")
+        print(f"\nOr let {CLI_NAME} do it: {CLI_NAME} where --fix")
+    else:
+        print(f"\nThere is no {reach.entrypoint_for(st.config_dir, st.dialect)} "
+              "to read, so nothing could be traced.")
+
+    # Useful when the loader is unwanted: files the config demonstrably reads,
+    # so pointing the target setting at one of them is the other way out.
+    # Only ones inside the config dir -- the rest are the distribution's, and
+    # writing rules into those would be undone by the next package update.
+    others = [p for p in status.scanned
+              if p != status.entrypoint and p.is_relative_to(st.config_dir)]
+    if others:
+        print(f"\nOr point the target at a file your config already reads "
+              f"({CLI_NAME} settings):")
+        for path in others[:12]:
+            print(f"    {path}")
+        if len(others) > 12:
+            print(f"    ... and {len(others) - 12} more")
+    return 1
+
+
+def _fix_loader(st, status, assume_yes: bool = False) -> int:
+    """Add the loader line for the user, once they have seen what it will do."""
+    from . import reach
+
+    if status.loaded:
+        print(f"Already loaded — {status.detail()}. Nothing to do.")
+        return 0
+    if status.kind == "no-entrypoint":
+        print(f"error: no {reach.entrypoint_for(st.config_dir, st.dialect)}",
+              file=sys.stderr)
+        return 1
+
+    snippet = reach.loader_snippet(st.path, st.dialect)
+    print(f"Appending to {status.entrypoint}:\n")
+    for line in snippet.splitlines():
+        print(f"    {line}")
+    if not assume_yes and not _confirm(sys.stdin, "\nAdd it? [y/N] "):
+        print("cancelled")
+        return 130
+
+    try:
+        entry, backup = reach.install_loader(st.config_dir, st.path, st.dialect)
+    except OSError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"added to {entry}" + (f" (backup {backup.name})" if backup else ""))
+    print("Reload Hyprland (hyprctl reload) for it to take effect.")
     return 0
+
+
+def _confirm(stream, prompt: str) -> bool:
+    """Confirm before editing a file the user hand-maintains.
+
+    Not a plain `input()`: a piped or absent stdin should decline rather than
+    raise, so this stays safe to call from a script.
+    """
+    if not stream or not stream.isatty():
+        print(prompt + "not a terminal — declining")
+        return False
+    try:
+        return input(prompt).strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        return False
 
 
 def cmd_gui(args) -> int:
@@ -161,7 +244,13 @@ def build_parser() -> argparse.ArgumentParser:
     tp = sub.add_parser("templates", help="list rule templates")
     tp.set_defaults(func=cmd_templates)
 
-    w = sub.add_parser("where", help="show where rules get written")
+    w = sub.add_parser("where",
+                       help="show where rules get written, and whether "
+                            "anything reads them")
+    w.add_argument("--fix", action="store_true",
+                   help="add the missing conf.d loader to your hyprland.lua")
+    w.add_argument("--yes", "-y", action="store_true",
+                   help="with --fix, do not ask first")
     w.set_defaults(func=cmd_where)
 
     return p
